@@ -1,11 +1,14 @@
 package mr
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
+	"sync"
 )
 
 type TaskStatus = int
@@ -16,26 +19,15 @@ const (
 	COMPLETE
 )
 
-type TaskType = int
-
-const (
-	MAP    TaskType = 0
-	REDUCE          = 1
-)
-
-type Task struct {
-	taskType   TaskType
-	taskStatus TaskStatus
-	id         int
-	fileName   string
-}
-
 type Master struct {
 	// Your definitions here.
-	files   []string
-	taskCh  chan Task
-	done    bool
-	nReduce int
+	mapTasks      map[string]TaskStatus
+	reduceTasks   map[string]TaskStatus
+	mapID         int
+	reduceID      int
+	mapTaskNum    int
+	reduceTaskNum int
+	requestMux    sync.Mutex
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -85,6 +77,53 @@ func __max(a, b int) int {
 	return a
 }
 
+func (m *Master) assignTask(file string, _type TaskType, reply *TaskResponse) {
+
+	reply.filename = file
+	reply.taskType = _type
+	if _type == MAP {
+		m.mapTasks[file] = PROGRESS
+		reply.id = m.mapID
+		m.mapID++
+	} else {
+		m.reduceTasks[file] = PROGRESS
+		reply.id = m.reduceID
+		m.reduceID++
+	}
+}
+
+// TODO
+func (m *Master) heartbeat(file string, _type TaskType) {
+
+}
+
+func (m *Master) request(TaskArgs, reply *TaskResponse) error {
+	m.requestMux.Lock()
+	defer m.requestMux.Unlock()
+	if m.mapTaskNum > 0 {
+		for file, task := range m.mapTasks {
+			if task == IDLE {
+				m.assignTask(file, MAP, reply)
+				m.heartbeat(file, MAP)
+				return nil
+			}
+		}
+		return errors.New("all mapped")
+	}
+	if m.reduceTaskNum > 0 {
+		for file, task := range m.reduceTasks {
+			if task == IDLE {
+				m.assignTask(file, REDUCE, reply)
+				m.heartbeat(file, REDUCE)
+				return nil
+			}
+		}
+		return errors.New("all mapped")
+	}
+
+	return errors.New("DONE")
+}
+
 //
 // create a Master.
 // main/mrmaster.go calls this function.
@@ -92,11 +131,18 @@ func __max(a, b int) int {
 //
 func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{}
-	m.files = files
-	m.nReduce = nReduce
+	m.mapTasks = make(map[string]TaskStatus)
+	m.reduceTasks = make(map[string]TaskStatus)
 
-	m.taskCh = make(chan Task, __max(nReduce, len(files)))
+	for _, f := range files {
+		m.mapTasks[f] = IDLE
+	}
 
+	for i := 0; i < nReduce; i++ {
+		m.reduceTasks[fmt.Sprintf("reduce-worker-[0-9]*-%d", i)] = IDLE
+	}
+	m.reduceTaskNum = nReduce
+	m.mapTaskNum = len(files)
 	// Your code here.
 
 	m.server()

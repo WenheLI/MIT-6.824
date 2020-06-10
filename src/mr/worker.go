@@ -1,10 +1,12 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
-
+import (
+	"fmt"
+	"hash/fnv"
+	"log"
+	"net/rpc"
+	"os"
+)
 
 //
 // Map functions return a slice of KeyValue.
@@ -24,13 +26,21 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
 //
 // main/mrworker.go calls this function.
 //
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
+	args := TaskArgs{}
+	reply := TaskResponse{}
+	for {
+		callError := call("Master.request", args, &reply)
+		if callError {
 
+		} else {
+			os.Exit(0)
+		}
+	}
 	// Your worker implementation here.
 
 	// uncomment to send the Example RPC to the master.
